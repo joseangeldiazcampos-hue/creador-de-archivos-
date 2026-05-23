@@ -1,333 +1,402 @@
 /**
- * ScanForge - Rutas de Conversión
+ * ScanForge - Rutas de Conversión (Mejorado)
  * 
- * Este módulo contiene el endpoint POST /api/convert que recibe
- * texto escaneado y lo convierte al formato solicitado:
- *   - xlsx (Excel)
- *   - docx (Word)
- *   - pdf
- *   - txt
+ * Convierte texto escaneado a Excel, Word, PDF o TXT
+ * con formato inteligente: detecta títulos, secciones,
+ * listas y organiza el contenido automáticamente.
  */
 
 const express = require('express');
 const ExcelJS = require('exceljs');
-const { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle } = require('docx');
+const { Document, Packer, Paragraph, TextRun, HeadingLevel, BorderStyle, AlignmentType, TabStopType, TabStopPosition } = require('docx');
 const PDFDocument = require('pdfkit');
 
 const router = express.Router();
 
+// ═══════════════════════════════════════════════════════════
+// Utilidad: Analizar estructura del texto
+// ═══════════════════════════════════════════════════════════
+
 /**
- * POST /api/convert
- * 
- * Convierte texto plano al formato de archivo especificado.
- * 
- * Body esperado (JSON):
- *   - text: string     → Texto escaneado a convertir
- *   - format: string   → Formato destino: 'xlsx', 'docx', 'pdf' o 'txt'
- *   - filename: string → Nombre del archivo de salida (sin extensión)
+ * Analiza el texto y detecta títulos, secciones, listas, etc.
+ * Retorna un array de objetos { type, text }
+ * type: 'title' | 'heading' | 'subheading' | 'list' | 'paragraph' | 'empty'
  */
+function parseTextStructure(text) {
+  const lines = text.split('\n');
+  const parsed = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      parsed.push({ type: 'empty', text: '' });
+      continue;
+    }
+
+    // Detectar títulos (todo mayúsculas, mínimo 3 caracteres)
+    const upperRatio = (trimmed.match(/[A-ZÁÉÍÓÚÑ]/g) || []).length / trimmed.replace(/\s/g, '').length;
+    if (upperRatio > 0.7 && trimmed.length >= 3 && trimmed.length <= 80 && !trimmed.match(/^\d/)) {
+      // Si es corto y mayúsculas, es título
+      if (trimmed.length <= 40) {
+        parsed.push({ type: 'title', text: trimmed });
+      } else {
+        parsed.push({ type: 'heading', text: trimmed });
+      }
+      continue;
+    }
+
+    // Detectar encabezados (línea corta seguida de línea larga = posible subtítulo)
+    if (trimmed.length <= 50 && i + 1 < lines.length) {
+      const nextLine = lines[i + 1]?.trim() || '';
+      if (nextLine.length > trimmed.length * 1.5 && trimmed.endsWith(':')) {
+        parsed.push({ type: 'heading', text: trimmed });
+        continue;
+      }
+    }
+
+    // Detectar listas (empieza con -, *, •, número., etc.)
+    if (/^[-*•●►▸]\s/.test(trimmed) || /^\d+[.)]\s/.test(trimmed)) {
+      parsed.push({ type: 'list', text: trimmed });
+      continue;
+    }
+
+    // Párrafo normal
+    parsed.push({ type: 'paragraph', text: trimmed });
+  }
+
+  return parsed;
+}
+
+// ═══════════════════════════════════════════════════════════
+// POST /api/convert
+// ═══════════════════════════════════════════════════════════
+
 router.post('/api/convert', async (req, res) => {
   try {
     const { text, format, filename } = req.body;
 
-    // --- Validación de parámetros ---
     if (!text || typeof text !== 'string') {
-      return res.status(400).json({
-        error: 'Texto requerido',
-        mensaje: 'Debe proporcionar el texto escaneado para la conversión.',
-      });
+      return res.status(400).json({ error: 'Texto requerido' });
     }
 
     if (!format || !['xlsx', 'docx', 'pdf', 'txt'].includes(format)) {
-      return res.status(400).json({
-        error: 'Formato no válido',
-        mensaje: 'Los formatos aceptados son: xlsx, docx, pdf, txt.',
-      });
+      return res.status(400).json({ error: 'Formato no válido' });
     }
 
-    // Nombre de archivo por defecto si no se proporciona
     const nombreArchivo = filename || 'scanforge_documento';
 
-    // --- Seleccionar el generador según el formato ---
     switch (format) {
-      case 'xlsx':
-        await generarExcel(text, nombreArchivo, res);
-        break;
-      case 'docx':
-        await generarWord(text, nombreArchivo, res);
-        break;
-      case 'pdf':
-        await generarPDF(text, nombreArchivo, res);
-        break;
-      case 'txt':
-        generarTexto(text, nombreArchivo, res);
-        break;
-      default:
-        // Este caso no debería alcanzarse gracias a la validación anterior
-        res.status(400).json({ error: 'Formato no soportado' });
+      case 'xlsx': await generarExcel(text, nombreArchivo, res); break;
+      case 'docx': await generarWord(text, nombreArchivo, res); break;
+      case 'pdf':  await generarPDF(text, nombreArchivo, res); break;
+      case 'txt':  generarTexto(text, nombreArchivo, res); break;
     }
   } catch (error) {
     console.error('❌ Error en la conversión:', error.message);
-    res.status(500).json({
-      error: 'Error de conversión',
-      mensaje: 'No se pudo generar el archivo. Intente nuevamente.',
-    });
+    res.status(500).json({ error: 'Error de conversión', mensaje: error.message });
   }
 });
 
 // ═══════════════════════════════════════════════════════════
-// Generadores de archivos
+// EXCEL — Organizado por secciones con colores
 // ═══════════════════════════════════════════════════════════
 
-/**
- * Genera un archivo Excel (.xlsx) con el texto escaneado.
- * Cada línea del texto se convierte en una fila con número de línea y contenido.
- * 
- * @param {string} texto - Texto escaneado
- * @param {string} nombreArchivo - Nombre del archivo sin extensión
- * @param {object} res - Objeto de respuesta Express
- */
 async function generarExcel(texto, nombreArchivo, res) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'ScanForge';
   workbook.created = new Date();
 
-  // Crear hoja de trabajo
   const hoja = workbook.addWorksheet('Texto Escaneado');
+  const estructura = parseTextStructure(texto);
 
-  // Definir columnas con encabezados
+  // Definir columna única ancha
   hoja.columns = [
-    { header: 'Línea', key: 'linea', width: 10 },
-    { header: 'Contenido', key: 'contenido', width: 80 },
+    { header: 'Contenido', key: 'contenido', width: 100 },
   ];
 
-  // --- Estilizar la fila de encabezado ---
-  const filaEncabezado = hoja.getRow(1);
-  filaEncabezado.eachCell((celda) => {
-    // Fondo azul oscuro con texto blanco en negrita
-    celda.fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FF1E3A5F' },
-    };
-    celda.font = {
-      bold: true,
-      color: { argb: 'FFFFFFFF' },
-      size: 12,
-    };
-    celda.alignment = {
-      vertical: 'middle',
-      horizontal: 'center',
-    };
-    celda.border = {
-      top: { style: 'thin' },
-      left: { style: 'thin' },
-      bottom: { style: 'thin' },
-      right: { style: 'thin' },
-    };
+  // Estilo del encabezado
+  const filaEnc = hoja.getRow(1);
+  filaEnc.eachCell((c) => {
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+    c.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 14, name: 'Calibri' };
+    c.alignment = { vertical: 'middle', horizontal: 'center' };
+    c.border = { top: { style: 'thin' }, bottom: { style: 'medium', color: { argb: 'FF7C3AED' } } };
   });
+  filaEnc.height = 30;
 
-  // --- Agregar las líneas del texto como filas ---
-  const lineas = texto.split('\n');
-  lineas.forEach((linea, indice) => {
-    const fila = hoja.addRow({
-      linea: indice + 1,
-      contenido: linea,
-    });
+  let filaNum = 2;
 
-    // Agregar bordes a cada celda de la fila
-    fila.eachCell((celda) => {
-      celda.border = {
-        top: { style: 'thin' },
-        left: { style: 'thin' },
-        bottom: { style: 'thin' },
-        right: { style: 'thin' },
-      };
-      celda.alignment = { vertical: 'top', wrapText: true };
-    });
-  });
+  for (const item of estructura) {
+    if (item.type === 'empty') {
+      filaNum++;
+      continue;
+    }
 
-  // --- Auto-ajustar el ancho de columnas según el contenido ---
-  hoja.columns.forEach((columna) => {
-    let anchoMaximo = columna.header.length;
-    columna.eachCell({ includeEmpty: true }, (celda) => {
-      const valor = celda.value ? celda.value.toString() : '';
-      // Limitar el ancho máximo a 100 caracteres para evitar columnas excesivas
-      anchoMaximo = Math.max(anchoMaximo, Math.min(valor.length, 100));
-    });
-    columna.width = anchoMaximo + 4; // Agregar margen adicional
-  });
+    const fila = hoja.getRow(filaNum);
+    fila.getCell(1).value = item.text;
 
-  // --- Enviar el archivo como respuesta ---
-  const contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-  res.setHeader('Content-Type', contentType);
+    if (item.type === 'title') {
+      fila.getCell(1).font = { bold: true, size: 16, name: 'Calibri', color: { argb: 'FF1E3A5F' } };
+      fila.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8EDF5' } };
+      fila.height = 28;
+    } else if (item.type === 'heading') {
+      fila.getCell(1).font = { bold: true, size: 13, name: 'Calibri', color: { argb: 'FF7C3AED' } };
+      fila.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F0FF' } };
+      fila.height = 24;
+    } else if (item.type === 'list') {
+      fila.getCell(1).font = { size: 11, name: 'Calibri' };
+      fila.getCell(1).alignment = { indent: 2, wrapText: true };
+    } else {
+      fila.getCell(1).font = { size: 11, name: 'Calibri' };
+      fila.getCell(1).alignment = { wrapText: true };
+    }
+
+    // Bordes sutiles
+    fila.getCell(1).border = {
+      bottom: { style: 'hair', color: { argb: 'FFE0E0E0' } },
+    };
+
+    filaNum++;
+  }
+
+  // Enviar
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${nombreArchivo}.xlsx"`);
-
   await workbook.xlsx.write(res);
   res.end();
 }
 
-/**
- * Genera un archivo Word (.docx) con el texto escaneado.
- * Incluye un título con estilo y cada línea como un párrafo individual.
- * 
- * @param {string} texto - Texto escaneado
- * @param {string} nombreArchivo - Nombre del archivo sin extensión
- * @param {object} res - Objeto de respuesta Express
- */
-async function generarWord(texto, nombreArchivo, res) {
-  const lineas = texto.split('\n');
+// ═══════════════════════════════════════════════════════════
+// WORD — Con títulos, subtítulos y formato profesional
+// ═══════════════════════════════════════════════════════════
 
-  // Construir los párrafos del documento
-  const parrafos = [
+async function generarWord(texto, nombreArchivo, res) {
+  const estructura = parseTextStructure(texto);
+
+  const children = [
     // Título del documento
     new Paragraph({
       children: [
         new TextRun({
-          text: 'Texto Escaneado - ScanForge',
+          text: nombreArchivo.replace(/_/g, ' '),
           bold: true,
-          size: 36, // 18pt en half-points
+          size: 40, // 20pt
           font: 'Calibri',
           color: '1E3A5F',
         }),
       ],
-      heading: HeadingLevel.HEADING_1,
+      heading: HeadingLevel.TITLE,
+      spacing: { after: 100 },
+    }),
+
+    // Subtítulo con fecha
+    new Paragraph({
+      children: [
+        new TextRun({
+          text: `Generado por ScanForge — ${new Date().toLocaleDateString('es-MX', { year: 'numeric', month: 'long', day: 'numeric' })}`,
+          size: 20,
+          font: 'Calibri',
+          color: '888888',
+          italics: true,
+        }),
+      ],
       spacing: { after: 200 },
     }),
 
-    // Línea separadora horizontal
+    // Separador
     new Paragraph({
-      border: {
-        bottom: {
-          color: '1E3A5F',
-          space: 1,
-          style: BorderStyle.SINGLE,
-          size: 6,
-        },
-      },
+      border: { bottom: { color: '7C3AED', space: 1, style: BorderStyle.SINGLE, size: 8 } },
       spacing: { after: 300 },
     }),
-
-    // Cada línea del texto como un párrafo independiente
-    ...lineas.map(
-      (linea) =>
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: linea || ' ', // Usar espacio para líneas vacías
-              size: 24, // 12pt en half-points
-              font: 'Calibri',
-            }),
-          ],
-          spacing: { after: 120 },
-        })
-    ),
   ];
 
-  // Crear el documento Word
+  // Agregar contenido con formato inteligente
+  for (const item of estructura) {
+    if (item.type === 'empty') {
+      children.push(new Paragraph({ spacing: { after: 100 } }));
+      continue;
+    }
+
+    if (item.type === 'title') {
+      children.push(new Paragraph({
+        children: [new TextRun({
+          text: item.text,
+          bold: true,
+          size: 32, // 16pt
+          font: 'Calibri',
+          color: '1E3A5F',
+        })],
+        heading: HeadingLevel.HEADING_1,
+        spacing: { before: 300, after: 150 },
+      }));
+    } else if (item.type === 'heading') {
+      children.push(new Paragraph({
+        children: [new TextRun({
+          text: item.text,
+          bold: true,
+          size: 26, // 13pt
+          font: 'Calibri',
+          color: '7C3AED',
+        })],
+        heading: HeadingLevel.HEADING_2,
+        spacing: { before: 200, after: 100 },
+      }));
+    } else if (item.type === 'list') {
+      children.push(new Paragraph({
+        children: [new TextRun({
+          text: '    ' + item.text,
+          size: 22,
+          font: 'Calibri',
+        })],
+        spacing: { after: 60 },
+      }));
+    } else {
+      children.push(new Paragraph({
+        children: [new TextRun({
+          text: item.text,
+          size: 22, // 11pt
+          font: 'Calibri',
+        })],
+        spacing: { after: 100 },
+      }));
+    }
+  }
+
   const documento = new Document({
     creator: 'ScanForge',
-    title: 'Texto Escaneado - ScanForge',
-    description: 'Documento generado por ScanForge a partir de texto escaneado con OCR',
-    sections: [
-      {
-        properties: {},
-        children: parrafos,
-      },
-    ],
+    title: nombreArchivo,
+    sections: [{ properties: {}, children }],
   });
 
-  // Generar el buffer del documento
   const buffer = await Packer.toBuffer(documento);
 
-  // --- Enviar el archivo como respuesta ---
-  const contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   res.setHeader('Content-Disposition', `attachment; filename="${nombreArchivo}.docx"`);
   res.send(buffer);
 }
 
-/**
- * Genera un archivo PDF con el texto escaneado.
- * Incluye título, separador y contenido con saltos de página automáticos.
- * 
- * @param {string} texto - Texto escaneado
- * @param {string} nombreArchivo - Nombre del archivo sin extensión
- * @param {object} res - Objeto de respuesta Express
- */
+// ═══════════════════════════════════════════════════════════
+// PDF — Profesional con secciones coloreadas
+// ═══════════════════════════════════════════════════════════
+
 async function generarPDF(texto, nombreArchivo, res) {
   return new Promise((resolve, reject) => {
-    // Crear el documento PDF con márgenes
     const doc = new PDFDocument({
-      margins: {
-        top: 60,
-        bottom: 60,
-        left: 60,
-        right: 60,
-      },
+      margins: { top: 50, bottom: 50, left: 55, right: 55 },
       size: 'LETTER',
       bufferPages: true,
       info: {
-        Title: 'Texto Escaneado - ScanForge',
+        Title: nombreArchivo,
         Author: 'ScanForge',
-        Creator: 'ScanForge',
       },
     });
 
-    // --- Configurar los headers de respuesta ---
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${nombreArchivo}.pdf"`);
-
-    // Enviar el PDF directamente al stream de respuesta
     doc.pipe(res);
 
-    // --- Título del documento ---
+    const estructura = parseTextStructure(texto);
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+
+    // Título del documento
     doc
       .font('Helvetica-Bold')
-      .fontSize(18)
+      .fontSize(22)
       .fillColor('#1E3A5F')
-      .text('Texto Escaneado', { align: 'left' });
+      .text(nombreArchivo.replace(/_/g, ' '), { align: 'left' });
 
-    // --- Línea separadora ---
-    doc.moveDown(0.5);
-    const anchoLinea = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-    doc
-      .strokeColor('#1E3A5F')
-      .lineWidth(1.5)
-      .moveTo(doc.page.margins.left, doc.y)
-      .lineTo(doc.page.margins.left + anchoLinea, doc.y)
-      .stroke();
-
-    doc.moveDown(1);
-
-    // --- Contenido del texto ---
+    // Fecha
     doc
       .font('Helvetica')
-      .fontSize(12)
-      .fillColor('#333333')
-      .text(texto, {
-        align: 'left',
-        lineGap: 4,
-        paragraphGap: 6,
-      });
+      .fontSize(10)
+      .fillColor('#888888')
+      .text(`Generado por ScanForge — ${new Date().toLocaleDateString('es-MX')}`, { align: 'left' });
 
-    // Finalizar el documento PDF
+    // Separador
+    doc.moveDown(0.5);
+    doc
+      .strokeColor('#7C3AED')
+      .lineWidth(2)
+      .moveTo(doc.page.margins.left, doc.y)
+      .lineTo(doc.page.margins.left + pageWidth, doc.y)
+      .stroke();
+    doc.moveDown(0.8);
+
+    // Contenido
+    for (const item of estructura) {
+      // Verificar si necesita nueva página
+      if (doc.y > doc.page.height - 80) {
+        doc.addPage();
+      }
+
+      if (item.type === 'empty') {
+        doc.moveDown(0.4);
+        continue;
+      }
+
+      if (item.type === 'title') {
+        doc.moveDown(0.3);
+        // Fondo sutil para títulos
+        doc
+          .rect(doc.page.margins.left - 5, doc.y - 3, pageWidth + 10, 22)
+          .fill('#E8EDF5');
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(15)
+          .fillColor('#1E3A5F')
+          .text(item.text, doc.page.margins.left, doc.y - 17, { width: pageWidth });
+        doc.moveDown(0.3);
+      } else if (item.type === 'heading') {
+        doc.moveDown(0.2);
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(12)
+          .fillColor('#7C3AED')
+          .text(item.text, { width: pageWidth });
+        doc.moveDown(0.15);
+      } else if (item.type === 'list') {
+        doc
+          .font('Helvetica')
+          .fontSize(10.5)
+          .fillColor('#333333')
+          .text('    ' + item.text, { width: pageWidth, lineGap: 2 });
+      } else {
+        doc
+          .font('Helvetica')
+          .fontSize(10.5)
+          .fillColor('#333333')
+          .text(item.text, { width: pageWidth, lineGap: 3, paragraphGap: 2 });
+      }
+    }
+
+    // Pie de página
+    const totalPages = doc.bufferedPageRange().count;
+    for (let i = 0; i < totalPages; i++) {
+      doc.switchToPage(i);
+      doc
+        .font('Helvetica')
+        .fontSize(8)
+        .fillColor('#AAAAAA')
+        .text(
+          `ScanForge — Página ${i + 1} de ${totalPages}`,
+          doc.page.margins.left,
+          doc.page.height - 35,
+          { width: pageWidth, align: 'center' }
+        );
+    }
+
     doc.end();
-
-    // Resolver cuando el stream termine
     doc.on('end', resolve);
     doc.on('error', reject);
   });
 }
 
-/**
- * Genera un archivo de texto plano (.txt).
- * Simplemente retorna el texto tal cual con codificación UTF-8.
- * 
- * @param {string} texto - Texto escaneado
- * @param {string} nombreArchivo - Nombre del archivo sin extensión
- * @param {object} res - Objeto de respuesta Express
- */
+// ═══════════════════════════════════════════════════════════
+// TXT — Texto limpio
+// ═══════════════════════════════════════════════════════════
+
 function generarTexto(texto, nombreArchivo, res) {
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${nombreArchivo}.txt"`);

@@ -1,38 +1,36 @@
 /**
  * ScanForge - Servidor Principal
  * 
- * Servidor Express que gestiona la conversión de texto escaneado (OCR)
- * a múltiples formatos de archivo: Excel, Word, PDF y TXT.
- * 
- * El OCR se realiza en el cliente con Tesseract.js; este servidor
- * se encarga únicamente de la conversión y descarga de archivos.
+ * El OCR se realiza en el cliente con Puter.js (IA).
+ * Este servidor maneja la conversión de texto a archivos
+ * (Excel, Word, PDF, TXT) y sirve los archivos estáticos.
  */
 
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 
-// Importar rutas de conversión
+// Importar rutas
 const convertRoutes = require('./routes/convert');
 
-// Crear la aplicación Express
+// OCR del servidor (respaldo, usa sharp + tesseract.js)
+let ocrRoutes = null;
+try {
+  ocrRoutes = require('./routes/ocr');
+} catch (e) {
+  console.log('⚠️ OCR del servidor no disponible (respaldo desactivado):', e.message);
+}
+
 const app = express();
 
 // --- Middlewares ---
-
-// Habilitar CORS para permitir peticiones desde cualquier origen
 app.use(cors());
-
-// Parsear cuerpos JSON con un límite de 50MB para textos extensos
 app.use(express.json({ limit: '50mb' }));
-
-// Servir archivos estáticos desde la carpeta 'public'
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- Rutas ---
-
-// Montar las rutas de conversión de archivos
 app.use(convertRoutes);
+if (ocrRoutes) app.use(ocrRoutes);
 
 // --- Manejo de errores global ---
 

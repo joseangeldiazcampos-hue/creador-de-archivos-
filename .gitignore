@@ -34,3 +34,6 @@ coverage/
 # Build
 dist/
 build/
+
+# Tesseract trained data (muy pesado)
+*.traineddata

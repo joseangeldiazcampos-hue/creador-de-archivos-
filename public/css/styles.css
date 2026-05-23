@@ -195,6 +195,149 @@ body::before {
   color: var(--text-primary);
 }
 
+/* === Selector de modo OCR === */
+.ocr-mode-selector {
+  margin-bottom: 1.5rem;
+}
+
+.mode-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.mode-tab {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  text-align: center;
+}
+
+.mode-tab:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.mode-tab.active {
+  background: rgba(124, 58, 237, 0.15);
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+}
+
+.mode-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-tertiary));
+  color: #fff;
+  padding: 0.15rem 0.5rem;
+  border-radius: 10px;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
+
+.mode-description {
+  margin-bottom: 0.75rem;
+}
+
+.mode-description p {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* API Key setup */
+.api-key-setup {
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+}
+
+.api-key-setup.hidden {
+  display: none;
+}
+
+.api-key-input-group {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.api-key-input-group input {
+  flex: 1;
+  padding: 0.65rem 0.9rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.3s ease;
+}
+
+.api-key-input-group input:focus {
+  border-color: var(--accent-primary);
+}
+
+.btn-save-key {
+  padding: 0.65rem 1.2rem;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  white-space: nowrap;
+}
+
+.btn-save-key:hover {
+  filter: brightness(1.15);
+}
+
+.api-key-hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.api-key-hint a {
+  color: var(--accent-tertiary);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.api-key-hint a:hover {
+  text-decoration: underline;
+}
+
+.api-key-status {
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.api-key-status.saved {
+  color: var(--success);
+}
+
+.api-key-status.error {
+  color: var(--error);
+}
+
 /* === Zona de arrastre (Drag & Drop) === */
 .drop-zone {
   border: 2px dashed var(--surface-border);
@@ -295,6 +438,208 @@ body::before {
 .btn-remove:hover {
   background: var(--error);
   transform: scale(1.05);
+}
+
+/* === Controles de preprocesamiento === */
+.preprocess-controls {
+  margin-top: 1.5rem;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  animation: slideUp 0.4s ease both;
+}
+
+.preprocess-controls.hidden {
+  display: none;
+}
+
+.preprocess-title {
+  font-family: var(--font-heading);
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  color: var(--text-primary);
+}
+
+.preprocess-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 1.25rem;
+}
+
+.controls-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem 1.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.control-group label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 0.4rem;
+}
+
+.control-group label span {
+  color: var(--accent-tertiary);
+  font-weight: 600;
+}
+
+/* Sliders */
+.control-group input[type="range"] {
+  width: 100%;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--surface);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+.control-group input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-tertiary));
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(124, 58, 237, 0.4);
+  transition: transform 0.2s ease;
+}
+
+.control-group input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.control-group input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-tertiary));
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(124, 58, 237, 0.4);
+}
+
+/* Checkboxes estilizados */
+.control-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-direction: row !important;
+}
+
+.control-toggle label {
+  margin-bottom: 0 !important;
+  cursor: pointer;
+}
+
+.control-toggle input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 44px;
+  height: 24px;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.3s ease;
+  flex-shrink: 0;
+}
+
+.control-toggle input[type="checkbox"]::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: all 0.3s ease;
+}
+
+.control-toggle input[type="checkbox"]:checked {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  border-color: var(--accent-primary);
+}
+
+.control-toggle input[type="checkbox"]:checked::after {
+  left: 22px;
+  background: #fff;
+}
+
+/* Vista previa procesada */
+.preview-processed {
+  margin-bottom: 1.25rem;
+}
+
+.preview-label {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+#preview-canvas {
+  width: 100%;
+  max-height: 250px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--surface-border);
+  background: #111;
+  display: none;
+}
+
+#preview-canvas.visible {
+  display: block;
+}
+
+/* Botones de preprocesamiento */
+.preprocess-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.btn-preview-process,
+.btn-rescan {
+  flex: 1;
+  min-width: 140px;
+  padding: 0.7rem 1rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.btn-preview-process {
+  background: var(--surface);
+  color: var(--text-primary);
+  border: 1px solid var(--surface-border);
+}
+
+.btn-preview-process:hover {
+  background: var(--surface-hover);
+  border-color: var(--accent-tertiary);
+}
+
+.btn-rescan {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: #fff;
+  border: none;
+}
+
+.btn-rescan:hover {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
 }
 
 /* === Barra de progreso === */
