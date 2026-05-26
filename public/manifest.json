@@ -1,24 +1,43 @@
 {
-  "name": "ScanForge",
+  "name": "ScanForge - Creador de Archivos",
   "short_name": "ScanForge",
-  "description": "Escáner de texto OCR con conversión a múltiples formatos.",
+  "description": "Escáner de texto OCR con conversión a múltiples formatos como Excel, Word y PDF. Herramienta rápida y gratuita.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f172a",
   "theme_color": "#7c3aed",
   "orientation": "portrait-primary",
+  "dir": "ltr",
+  "lang": "es-MX",
+  "categories": ["productivity", "utilities"],
   "icons": [
     {
-      "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSI+PHJlY3QgeD0iMyIgeT0iMiIgd2lkdGg9IjE4IiBoZWlnaHQ9IjIwIiByeD0iMiIgc3Ryb2tlPSIjN2MzYWVkIiBzdHJva2Utd2lkdGg9IjEuNSIvPjxwYXRoIGQ9Ik03IDdoMTBNNyAxMWgxME03IDE1aDYiIHN0cm9rZT0iIzc0MzFlZCIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxyZWN0IHk9IjE3IiB3aWR0aD0iMjQiIGhlaWdodD0iMiIgZmlsbD0iIzA2YjZkNCIvPjwvc3ZnPg==",
+      "src": "/icon-192.png",
       "sizes": "192x192",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSI+PHJlY3QgeD0iMyIgeT0iMiIgd2lkdGg9IjE4IiBoZWlnaHQ9IjIwIiByeD0iMiIgc3Ryb2tlPSIjN2MzYWVkIiBzdHJva2Utd2lkdGg9IjEuNSIvPjxwYXRoIGQ9Ik03IDdoMTBNNyAxMWgxME03IDE1aDYiIHN0cm9rZT0iIzc0MzFlZCIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxyZWN0IHk9IjE3IiB3aWR0aD0iMjQiIGhlaWdodD0iMiIgZmlsbD0iIzA2YjZkNCIvPjwvc3ZnPg==",
+      "src": "/icon-512.png",
       "sizes": "512x512",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshot-1.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Pantalla principal de ScanForge en escritorio"
+    },
+    {
+      "src": "/screenshot-2.png",
+      "sizes": "720x1280",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "ScanForge en dispositivo móvil"
     }
   ]
 }
