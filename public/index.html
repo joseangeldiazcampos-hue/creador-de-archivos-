@@ -6,6 +6,11 @@
   <meta name="description" content="ScanForge — Escanea texto de imágenes con OCR y conviértelo a Excel, Word, PDF o TXT. Rápido, preciso y gratuito.">
   <title>ScanForge — Escáner de Texto a Archivos</title>
 
+  <!-- PWA Meta Tags -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#7c3aed">
+  <link rel="apple-touch-icon" href="/manifest.json"> <!-- Puedes reemplazar con icono real -->
+
   <!-- Fuentes de Google -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -63,16 +68,18 @@
           <path d="M2 17l.621 2.485A2 2 0 0 0 4.561 21h14.878a2 2 0 0 0 1.94-1.515L22 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           <path d="M8 21h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
-        <p class="drop-text">Arrastra una imagen aquí o</p>
-        <button class="btn-upload" id="btn-upload" type="button">Seleccionar Archivo</button>
+        <button class="btn-upload" id="btn-upload" type="button">Seleccionar Archivos</button>
         <button class="btn-camera" id="btn-camera" type="button">📷 Tomar Foto</button>
-        <input type="file" id="file-input" accept="image/*" hidden>
-        <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
+        <input type="file" id="file-input" accept="image/*" multiple hidden>
+        <input type="file" id="camera-input" accept="image/*" capture="environment" multiple hidden>
       </div>
 
-      <div class="image-preview hidden" id="image-preview">
-        <img id="preview-image" alt="Vista previa de la imagen subida">
-        <button class="btn-remove" id="btn-remove" type="button">✕ Quitar imagen</button>
+      <div class="image-preview-grid hidden" id="image-preview-grid">
+        <!-- Las imágenes seleccionadas se renderizarán aquí -->
+      </div>
+      <div class="preview-actions hidden" id="preview-actions">
+        <button class="btn-remove" id="btn-remove" type="button">✕ Quitar imágenes</button>
+        <button class="btn-primary" id="btn-process-all" type="button">🚀 Procesar Imágenes</button>
       </div>
     </section>
 
@@ -177,5 +184,18 @@
   <script src="js/ui.js"></script>
   <script src="js/ocr.js"></script>
   <script src="js/app.js"></script>
+
+  <!-- Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').then((registration) => {
+          console.log('[Service Worker] Registrado con éxito:', registration.scope);
+        }).catch((err) => {
+          console.error('[Service Worker] Error al registrar:', err);
+        });
+      });
+    }
+  </script>
 </body>
 </html>

@@ -9,6 +9,8 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 // Importar rutas
 const convertRoutes = require('./routes/convert');
@@ -23,9 +25,25 @@ try {
 
 const app = express();
 
-// --- Middlewares ---
+// --- Middlewares de Seguridad Básicos ---
+app.use(helmet({
+  contentSecurityPolicy: false, // Se desactiva temporalmente CSP para permitir scripts de terceros (como Puter.js)
+  crossOriginEmbedderPolicy: false
+}));
+
+// --- Limitador de Peticiones (Rate Limiting) ---
+// Evita ataques DDoS o abusos en la API
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 100, // Limita a 100 peticiones por IP cada 15 minutos
+  message: { error: 'Demasiadas peticiones desde esta IP, por favor inténtelo de nuevo después de 15 minutos.' }
+});
+app.use(limiter);
+
+// --- Middlewares Generales ---
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+// Limitar severamente el tamaño del JSON para prevenir saturación de memoria
+app.use(express.json({ limit: '5mb' })); // Cambiado de 50mb a 5mb (el OCR en el cliente envía texto, no imagen)
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- Rutas ---

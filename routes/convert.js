@@ -78,14 +78,23 @@ router.post('/api/convert', async (req, res) => {
     const { text, format, filename } = req.body;
 
     if (!text || typeof text !== 'string') {
-      return res.status(400).json({ error: 'Texto requerido' });
+      return res.status(400).json({ error: 'Texto requerido y debe ser una cadena válida' });
+    }
+
+    // Seguridad: Límite estricto de tamaño del texto (aprox. 500,000 caracteres ~ 500KB de texto puro)
+    // Esto previene que se agote la memoria del servidor al intentar parsear un texto gigante.
+    if (text.length > 500000) {
+      return res.status(413).json({ error: 'El texto es demasiado largo para ser procesado. Límite: 500,000 caracteres.' });
     }
 
     if (!format || !['xlsx', 'docx', 'pdf', 'txt'].includes(format)) {
       return res.status(400).json({ error: 'Formato no válido' });
     }
 
-    const nombreArchivo = filename || 'scanforge_documento';
+    // Sanitizar el nombre del archivo (quitar caracteres especiales para evitar inyección o rutas relativas)
+    let nombreArchivo = filename || 'scanforge_documento';
+    if (typeof nombreArchivo !== 'string') nombreArchivo = 'scanforge_documento';
+    nombreArchivo = nombreArchivo.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 100);
 
     switch (format) {
       case 'xlsx': await generarExcel(text, nombreArchivo, res); break;

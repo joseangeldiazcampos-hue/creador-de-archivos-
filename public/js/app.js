@@ -15,9 +15,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const cameraInput       = document.getElementById('camera-input');
   const btnUpload         = document.getElementById('btn-upload');
   const btnCamera         = document.getElementById('btn-camera');
-  const previewImage      = document.getElementById('preview-image');
-  const imagePreview      = document.getElementById('image-preview');
+  const imagePreviewGrid  = document.getElementById('image-preview-grid');
+  const previewActions    = document.getElementById('preview-actions');
   const btnRemove         = document.getElementById('btn-remove');
+  const btnProcessAll     = document.getElementById('btn-process-all');
+  let selectedFiles       = [];
   const extractedTextArea = document.getElementById('extracted-text');
   const formatCards       = document.querySelectorAll('.format-card');
   const filenameInput     = document.getElementById('filename');
@@ -35,9 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) handleImage(file);
-    else UI.showToast('Por favor, sube una imagen válida', 'error');
+    if (e.dataTransfer.files.length > 0) handleFilesSelection(e.dataTransfer.files);
   });
   dropZone.addEventListener('click', (e) => { if (!e.target.closest('button')) fileInput.click(); });
 
@@ -46,8 +46,8 @@ document.addEventListener('DOMContentLoaded', () => {
      ======================================== */
   btnUpload.addEventListener('click', (e) => { e.stopPropagation(); fileInput.click(); });
   btnCamera.addEventListener('click', (e) => { e.stopPropagation(); cameraInput.click(); });
-  fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleImage(e.target.files[0]); });
-  cameraInput.addEventListener('change', (e) => { if (e.target.files[0]) handleImage(e.target.files[0]); });
+  fileInput.addEventListener('change', (e) => { handleFilesSelection(e.target.files); });
+  cameraInput.addEventListener('change', (e) => { handleFilesSelection(e.target.files); });
 
   /* ========================================
      Quitar imagen
@@ -56,8 +56,16 @@ document.addEventListener('DOMContentLoaded', () => {
     UI.resetAll();
     selectedFormat = null;
     extractedText = '';
-    currentFile = null;
+    selectedFiles = [];
+    if(imagePreviewGrid) imagePreviewGrid.innerHTML = '';
+    if(imagePreviewGrid) imagePreviewGrid.classList.add('hidden');
+    if(previewActions) previewActions.classList.add('hidden');
+    dropZone.classList.remove('hidden');
   });
+
+  if (btnProcessAll) {
+    btnProcessAll.addEventListener('click', processAllImages);
+  }
 
   /* ========================================
      Selección de formato
@@ -100,53 +108,81 @@ document.addEventListener('DOMContentLoaded', () => {
   /* ========================================
      Manejar imagen
      ======================================== */
-  async function handleImage(file) {
-    if (file.size > 20 * 1024 * 1024) {
-      UI.showToast('La imagen es demasiado grande (máx. 20 MB)', 'error');
+  function handleFilesSelection(filesList) {
+    const files = Array.from(filesList).filter(f => f.type.startsWith('image/'));
+    if (files.length === 0) {
+      UI.showToast('Por favor, selecciona imágenes válidas', 'error');
       return;
     }
 
-    currentFile = file;
+    let tooLarge = false;
+    files.forEach(f => {
+      if (f.size > 20 * 1024 * 1024) tooLarge = true;
+      else selectedFiles.push(f);
+    });
 
-    // Vista previa
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      previewImage.src = e.target.result;
-      imagePreview.classList.remove('hidden');
-      dropZone.classList.add('hidden');
-    };
-    reader.readAsDataURL(file);
+    if (tooLarge) UI.showToast('Algunas imágenes superan los 20MB y fueron ignoradas', 'error');
+    if (selectedFiles.length === 0) return;
 
-    // Ejecutar OCR
+    dropZone.classList.add('hidden');
+    imagePreviewGrid.classList.remove('hidden');
+    previewActions.classList.remove('hidden');
+    
+    // Renderizar miniaturas
+    imagePreviewGrid.innerHTML = '';
+    selectedFiles.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const div = document.createElement('div');
+        div.className = 'preview-thumb-container';
+        div.innerHTML = `<img src="${e.target.result}" alt="Preview">`;
+        imagePreviewGrid.appendChild(div);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function processAllImages() {
     UI.showSection(ocrSection);
-    UI.updateProgress(0, 'Iniciando escaneo...');
+    UI.updateProgress(0, 'Iniciando escaneo en lote...');
+    previewActions.classList.add('hidden');
 
-    try {
-      const result = await OCR.scanImage(file, (progress) => {
-        UI.updateProgress(Math.round(progress.progress * 100), progress.status);
-      });
+    let combinedText = '';
+    let totalConfidence = 0;
+    let successfulScans = 0;
 
-      if (result && result.text) {
-        extractedText = result.text;
-        extractedTextArea.value = result.text;
-
-        UI.updateProgress(100, `✅ Completado — Confianza: ${Math.round(result.confidence)}%`);
-
-        const statConfidence = document.getElementById('stat-confidence');
-        const statChars = document.getElementById('stat-chars');
-        if (statConfidence) statConfidence.textContent = `🎯 Confianza: ${Math.round(result.confidence)}%`;
-        if (statChars) statChars.textContent = `📝 ${result.text.length} caracteres`;
-
-        UI.showSection(formatSection);
-        UI.showToast('¡Texto escaneado exitosamente!', 'success');
-      } else {
-        UI.updateProgress(0, '❌ No se pudo detectar texto');
-        UI.showToast('No se detectó texto. Intenta con otra imagen.', 'error');
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i];
+      UI.updateProgress(Math.round((i / selectedFiles.length) * 100), `Escaneando imagen ${i + 1} de ${selectedFiles.length}...`);
+      
+      try {
+        const result = await OCR.scanImage(file, () => {});
+        if (result && result.text) {
+          combinedText += `\n\n--- Página ${i + 1} ---\n\n${result.text}`;
+          totalConfidence += result.confidence;
+          successfulScans++;
+        }
+      } catch (err) {
+        console.error(`Error escaneando imagen ${i+1}:`, err);
       }
-    } catch (err) {
-      console.error('[ScanForge] Error:', err);
-      UI.updateProgress(0, '❌ Error en el escaneo');
-      UI.showToast('Error: ' + (err.message || 'Error desconocido'), 'error');
+    }
+
+    if (successfulScans > 0) {
+      extractedText = combinedText.trim();
+      extractedTextArea.value = extractedText;
+      const avgConfidence = Math.round(totalConfidence / successfulScans);
+
+      UI.updateProgress(100, `✅ Completado — Confianza prom: ${avgConfidence}%`);
+      const statConfidence = document.getElementById('stat-confidence');
+      const statChars = document.getElementById('stat-chars');
+      if (statConfidence) statConfidence.textContent = `🎯 Confianza: ${avgConfidence}%`;
+      if (statChars) statChars.textContent = `📝 ${extractedText.length} caracteres`;
+
+      UI.showSection(formatSection);
+      UI.showToast('¡Texto escaneado exitosamente!', 'success');
+    } else {
+      UI.updateProgress(0, '❌ No se detectó texto en las imágenes');
+      UI.showToast('No se detectó texto.', 'error');
     }
   }
 

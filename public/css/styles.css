@@ -401,6 +401,48 @@ body::before {
   display: none;
 }
 
+/* =========================================
+   Vista Previa de Imagen (Galería Múltiple)
+   ========================================= */
+.image-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 12px;
+  margin-top: 1.5rem;
+  width: 100%;
+}
+
+.preview-thumb-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-color);
+}
+
+.preview-thumb-container img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform var(--transition-fast);
+}
+
+.preview-thumb-container:hover img {
+  transform: scale(1.05);
+}
+
+/* Acciones debajo de la galería */
+.preview-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 /* === Vista previa de imagen === */
 .image-preview {
   position: relative;
@@ -420,24 +462,19 @@ body::before {
 }
 
 .btn-remove {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  background: rgba(239, 68, 68, 0.85);
-  color: #fff;
+  background: none;
   border: none;
-  padding: 0.4rem 0.9rem;
-  border-radius: var(--radius-sm);
-  font-size: 0.82rem;
-  font-weight: 600;
+  color: #ef4444; /* red-500 */
+  font-size: 0.95rem;
+  font-weight: 500;
   cursor: pointer;
-  backdrop-filter: blur(8px);
-  transition: all 0.25s ease;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--transition-fast);
 }
 
 .btn-remove:hover {
-  background: var(--error);
-  transform: scale(1.05);
+  background-color: #fef2f2; /* red-50 */
 }
 
 /* === Controles de preprocesamiento === */
