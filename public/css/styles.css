@@ -1255,3 +1255,100 @@ body::before {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* =============================================
+   Opciones de texto OCR (3 variantes)
+   ============================================= */
+.ocr-options-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 1.25rem 0 0.85rem;
+  text-align: center;
+}
+
+.ocr-options-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.85rem;
+  margin-bottom: 1.25rem;
+}
+
+.ocr-option-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1.5px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
+}
+
+.ocr-option-card:hover {
+  background: rgba(124, 58, 237, 0.08);
+  border-color: rgba(124, 58, 237, 0.4);
+  transform: translateY(-2px);
+}
+
+.ocr-option-card.selected {
+  border-color: var(--accent-primary);
+  background: rgba(124, 58, 237, 0.12);
+  box-shadow: 0 0 20px rgba(124, 58, 237, 0.2), 0 4px 16px rgba(0,0,0,0.3);
+}
+
+.ocr-option-card:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-primary);
+}
+
+.ocr-option-header {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.ocr-option-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-tertiary));
+  color: #fff;
+  padding: 0.15rem 0.5rem;
+  border-radius: 10px;
+}
+
+.ocr-option-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.ocr-option-confidence {
+  font-size: 0.72rem;
+  color: var(--accent-tertiary);
+  font-weight: 600;
+}
+
+.ocr-option-preview {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  max-height: 90px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+}
+
+@media (max-width: 640px) {
+  .ocr-options-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
