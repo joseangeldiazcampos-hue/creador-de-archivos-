@@ -1,4 +1,4 @@
-const CACHE_NAME = 'scanforge-v2';
+const CACHE_NAME = 'scanforge-v3';
 const ASSETS = [
   '/',
   '/index.html',
