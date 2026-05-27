@@ -1,8 +1,9 @@
 /**
- * ScanForge - Motor OCR (3 Variantes en Paralelo)
+ * ScanForge - Motor OCR (1 Worker, 3 Modos PSM → 3 Opciones)
  *
- * Genera 3 versiones de la imagen simultáneamente y devuelve
- * los 3 resultados para que el usuario elija el mejor.
+ * Usa un único worker de Tesseract (ahorra RAM en Render free tier ~512MB)
+ * y corre 3 modos PSM distintos secuencialmente.
+ * Devuelve las 3 opciones ordenadas por confianza para que el usuario elija.
  */
 
 const express = require('express');
@@ -11,50 +12,45 @@ const Tesseract = require('tesseract.js');
 
 const router = express.Router();
 
-// ─── Pool de 3 workers (uno por variante, corren en paralelo) ──────────────
-let workers = null;
+let worker = null;
+let workerReady = false;
 
-async function getWorkers() {
-  if (workers) return workers;
-  console.log('🔄 Inicializando 3 workers de Tesseract en paralelo...');
-  workers = await Promise.all([
-    Tesseract.createWorker('spa+eng', 1),
-    Tesseract.createWorker('spa+eng', 1),
-    Tesseract.createWorker('spa+eng', 1),
-  ]);
-  console.log('✅ 3 workers listos');
-  return workers;
+// ─── Worker único ──────────────────────────────────────────────────────────
+
+async function getWorker() {
+  if (worker && workerReady) return worker;
+  if (worker) {
+    try { await worker.terminate(); } catch (_) {}
+    worker = null;
+  }
+  console.log('🔄 Inicializando worker Tesseract...');
+  worker = await Tesseract.createWorker('spa+eng', 1);
+  workerReady = true;
+  console.log('✅ Worker listo');
+  return worker;
 }
 
-// Pre-calentar al arrancar el servidor
-getWorkers().catch(err => console.error('⚠️ Warmup falló:', err.message));
+// Pre-calentar al arrancar
+getWorker().catch(err => {
+  console.error('⚠️ Warmup falló:', err.message);
+  worker = null;
+  workerReady = false;
+});
 
 // ─── Pre-procesamiento ─────────────────────────────────────────────────────
 
-async function buildVariants(imageBuffer) {
+async function preprocessImage(imageBuffer) {
   const meta = await sharp(imageBuffer).metadata();
-  const targetWidth = Math.max(meta.width || 800, 2800);
+  const targetWidth = Math.max(meta.width || 800, 2500);
 
-  const base = () => sharp(imageBuffer).resize({
-    width: targetWidth,
-    kernel: sharp.kernel.lanczos3,
-    withoutEnlargement: false,
-  }).grayscale();
-
-  const [a, b, c] = await Promise.all([
-    // Variante A: Estándar - buena para la mayoría de documentos
-    base().normalize().linear(1.3, -15).sharpen({ sigma: 2.0 }).png({ compressionLevel: 1 }).toBuffer(),
-    // Variante B: Ultra contraste - para imágenes borrosas o con mal foco
-    base().normalize().linear(2.2, -70).sharpen({ sigma: 3.0, m1: 2.0, m2: 3.0 }).png({ compressionLevel: 1 }).toBuffer(),
-    // Variante C: Invertida - para texto claro sobre fondo oscuro
-    base().normalize().negate().linear(1.3, -15).sharpen({ sigma: 2.0 }).png({ compressionLevel: 1 }).toBuffer(),
-  ]);
-
-  return [
-    { id: 'A', label: 'Estándar',       buffer: a },
-    { id: 'B', label: 'Alto Contraste', buffer: b },
-    { id: 'C', label: 'Invertida',      buffer: c },
-  ];
+  return sharp(imageBuffer)
+    .resize({ width: targetWidth, kernel: sharp.kernel.lanczos3, withoutEnlargement: false })
+    .grayscale()
+    .normalize()
+    .linear(1.4, -20)
+    .sharpen({ sigma: 2.0 })
+    .png({ compressionLevel: 1 })
+    .toBuffer();
 }
 
 // ─── Limpieza de texto ─────────────────────────────────────────────────────
@@ -76,8 +72,18 @@ function autoCorrect(text) {
   return text
     .replace(/([a-záéíóúñA-ZÁÉÍÓÚÑ])0([a-záéíóúñA-ZÁÉÍÓÚÑ])/g, '$1o$2')
     .replace(/([a-záéíóúñA-ZÁÉÍÓÚÑ])1([a-záéíóúñA-ZÁÉÍÓÚÑ])/g, '$1l$2')
-    .replace(/ {2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    .replace(/ {2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
+
+// ─── 3 Modos PSM para dar al usuario 3 versiones ──────────────────────────
+
+const PSM_OPTIONS = [
+  { psm: '6',  label: 'Bloque de texto',   desc: 'Ideal para párrafos y documentos' },
+  { psm: '3',  label: 'Automático',        desc: 'Detección automática de estructura' },
+  { psm: '11', label: 'Texto disperso',    desc: 'Ideal para infografías y diseños' },
+];
 
 // ─── Ruta POST /api/ocr ────────────────────────────────────────────────────
 
@@ -90,40 +96,62 @@ router.post('/api/ocr', async (req, res) => {
     const imageBuffer = Buffer.from(base64Data, 'base64');
     console.log(`📸 Imagen: ${(imageBuffer.length / 1024).toFixed(0)} KB`);
 
-    const [variants, wks] = await Promise.all([
-      buildVariants(imageBuffer),
-      getWorkers(),
-    ]);
+    const processed = await preprocessImage(imageBuffer);
+    console.log(`🖼️ Preprocesada: ${(processed.length / 1024).toFixed(0)} KB`);
 
-    // Correr los 3 workers en paralelo (uno por variante) — mucho más rápido
-    const results = await Promise.all(variants.map(async (variant, i) => {
-      const w = wks[i];
+    const w = await getWorker();
+    const results = [];
+
+    for (const mode of PSM_OPTIONS) {
       try {
-        await w.setParameters({ tessedit_pageseg_mode: '6', preserve_interword_spaces: '1' });
-        const result = await w.recognize(variant.buffer);
-        const text = autoCorrect(cleanText(result.data.text || ''));
-        const confidence = Math.round(result.data.confidence || 0);
-        console.log(`  ✅ Variante ${variant.id} (${variant.label}): conf=${confidence}%, chars=${text.length}`);
-        return { id: variant.id, label: variant.label, text, confidence };
-      } catch (e) {
-        console.error(`  ❌ Error variante ${variant.id}:`, e.message);
-        return { id: variant.id, label: variant.label, text: '', confidence: 0 };
-      }
-    }));
+        await w.setParameters({
+          tessedit_pageseg_mode: mode.psm,
+          preserve_interword_spaces: '1',
+        });
 
-    // Ordenar por confianza descendente (la mejor primero)
+        const result = await w.recognize(processed);
+        const raw = (result.data.text || '').trim();
+        const text = autoCorrect(cleanText(raw));
+        const confidence = Math.round(result.data.confidence || 0);
+
+        console.log(`  PSM ${mode.psm} (${mode.label}): conf=${confidence}%, chars=${text.length}`);
+
+        results.push({
+          id: mode.psm,
+          label: mode.label,
+          desc: mode.desc,
+          text,
+          confidence,
+        });
+      } catch (e) {
+        console.error(`  ❌ PSM ${mode.psm} error:`, e.message);
+        results.push({ id: mode.psm, label: mode.label, desc: mode.desc, text: '', confidence: 0 });
+      }
+    }
+
+    // Ordenar: mayor confianza primero
     results.sort((a, b) => b.confidence - a.confidence);
 
-    console.log(`✅ OCR completado — Mejor: Variante ${results[0].id} (${results[0].confidence}%)`);
+    // Si todos los resultados están vacíos, reportarlo
+    const hasText = results.some(r => r.text.length > 5);
+    if (!hasText) {
+      console.log('❌ No se detectó texto en ningún modo.');
+      return res.json({
+        options: results,
+        engine: 'server',
+        error: 'no_text',
+      });
+    }
 
-    // Devolver las 3 opciones para que el usuario elija
+    console.log(`✅ Mejor: PSM ${results[0].id} (${results[0].confidence}%)`);
     res.json({ options: results, engine: 'server' });
 
   } catch (error) {
     console.error('❌ Error OCR:', error.message);
-    if (workers) {
-      try { await Promise.all(workers.map(w => w.terminate())); } catch (_) {}
-      workers = null;
+    workerReady = false;
+    if (worker) {
+      try { await worker.terminate(); } catch (_) {}
+      worker = null;
     }
     res.status(500).json({ error: 'Error de OCR', mensaje: error.message });
   }
