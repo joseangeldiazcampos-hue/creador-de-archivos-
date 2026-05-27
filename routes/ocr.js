@@ -22,10 +22,21 @@ let worker = null;
 async function getWorker() {
   if (worker) return worker;
   console.log('🔄 Inicializando worker de Tesseract...');
-  worker = await Tesseract.createWorker('spa+eng', 1);
-  console.log('✅ Worker de Tesseract listo');
+  try {
+    worker = await Tesseract.createWorker('spa+eng', 1, {
+      cacheMethod: 'readOnly', // No intentar escribir en disco en producción
+    });
+    console.log('✅ Worker de Tesseract listo');
+  } catch (err) {
+    console.error('❌ Error creando worker de Tesseract:', err.message);
+    worker = null;
+    throw err;
+  }
   return worker;
 }
+
+// Pre-calentar Tesseract al iniciar el servidor para no tener el retraso en la primera petición
+getWorker().catch(err => console.error('⚠️ Warmup de Tesseract falló:', err.message));
 
 /**
  * Prepara la imagen con sharp (suave, sin binarización).
@@ -48,16 +59,14 @@ async function preprocessImage(imageBuffer) {
     });
   }
 
-  // Mejora: Visión Biónica
-  // Usamos ecualización de histograma adaptativa (CLAHE) para balancear la iluminación (sombras/flash),
-  // seguido de normalización y aumento de contraste (linear) y un sharpen más fuerte.
+  // Pre-procesamiento compatible: grises + contraste lineal + nitidez fuerte
+  // Se evita .clahe() porque no está disponible en todos los entornos de producción
   const processed = await pipe
     .grayscale()
-    .clahe({ width: 100, height: 100, maxSlope: 3 }) // Arregla iluminación desigual
     .normalize()
-    .linear(1.2, -10) // Aumenta contraste un 20%
-    .sharpen({ sigma: 1.5 }) // Borde más definido para letras
-    .png()
+    .linear(1.3, -15)   // Contraste aumentado
+    .sharpen({ sigma: 2.0, m1: 1.0, m2: 2.0 }) // Letras con bordes nítidos
+    .png({ compressionLevel: 1 }) // PNG rápido sin comprimir mucho
     .toBuffer();
 
   return processed;
