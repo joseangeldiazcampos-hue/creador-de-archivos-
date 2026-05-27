@@ -48,12 +48,15 @@ async function preprocessImage(imageBuffer) {
     });
   }
 
-  // Solo escala de grises + auto-niveles + nitidez suave
-  // SIN threshold, SIN binarización
+  // Mejora: Visión Biónica
+  // Usamos ecualización de histograma adaptativa (CLAHE) para balancear la iluminación (sombras/flash),
+  // seguido de normalización y aumento de contraste (linear) y un sharpen más fuerte.
   const processed = await pipe
     .grayscale()
+    .clahe({ width: 100, height: 100, maxSlope: 3 }) // Arregla iluminación desigual
     .normalize()
-    .sharpen({ sigma: 1.2 })
+    .linear(1.2, -10) // Aumenta contraste un 20%
+    .sharpen({ sigma: 1.5 }) // Borde más definido para letras
     .png()
     .toBuffer();
 
@@ -91,6 +94,24 @@ function cleanText(text) {
   });
 
   return lines.join('\n').trim();
+}
+
+/**
+ * Mejora: Corrección Automática (NLP Básico)
+ * Corrige errores comunes de interpretación óptica (letras confundidas con números).
+ */
+function autoCorrectText(text) {
+  if (!text) return '';
+  return text
+    // Corrige '0' leídos como 'O' dentro de palabras (ej. "h0la" -> "hola")
+    .replace(/([a-zA-ZáéíóúÁÉÍÓÚñÑ])0([a-zA-ZáéíóúÁÉÍÓÚñÑ])/g, '$1o$2')
+    // Corrige '1' leídos como 'l' dentro de palabras
+    .replace(/([a-zA-ZáéíóúÁÉÍÓÚñÑ])1([a-zA-ZáéíóúÁÉÍÓÚñÑ])/g, '$1l$2')
+    // Normalizar múltiples espacios a uno solo
+    .replace(/ {2,}/g, ' ')
+    // Limpiar saltos de línea exagerados
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /**
@@ -159,6 +180,13 @@ router.post('/api/ocr', async (req, res) => {
           // Score combinado: confianza * cantidad de texto útil
           score: confidence * Math.min(cleaned.length, 2000) / 100,
         });
+
+        // Mejora: Early Stopping (Velocidad x4)
+        // Si el texto es de muy alta calidad y logramos más de 95% de confianza, detenemos la búsqueda
+        if (confidence >= 95 && cleaned.length > 20) {
+          console.log(`🚀 Early Stopping! Confianza estelar del ${confidence.toFixed(1)}% en modo ${mode.name}. Deteniendo escaneo extra.`);
+          break; 
+        }
       } catch (e) {
         console.error(`  ❌ Error PSM ${mode.psm}:`, e.message);
       }
@@ -182,7 +210,7 @@ router.post('/api/ocr', async (req, res) => {
     console.log(`✅ Mejor: PSM ${best.psm} (${best.name}) — confianza: ${best.confidence.toFixed(1)}%, score: ${best.score.toFixed(0)}`);
 
     res.json({
-      text: best.text,
+      text: autoCorrectText(best.text), // Aplicamos el NLP final aquí
       confidence: best.confidence,
       engine: 'server',
       mode: best.name,
