@@ -182,16 +182,22 @@
   <script src="js/ocr.js"></script>
   <script src="js/app.js"></script>
 
-  <!-- Service Worker Registration -->
+  <!-- Service Worker: Lo desregistramos para eliminar cachés viejos con Puter.js -->
   <script>
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').then((registration) => {
-          console.log('[Service Worker] Registrado con éxito:', registration.scope);
-        }).catch((err) => {
-          console.error('[Service Worker] Error al registrar:', err);
-        });
+      navigator.serviceWorker.getRegistrations().then(registrations => {
+        for (const reg of registrations) {
+          reg.unregister();
+          console.log('[SW] Desregistrado para limpiar caché vieja.');
+        }
       });
+      // Borrar todos los cachés del navegador
+      if ('caches' in window) {
+        caches.keys().then(keys => {
+          keys.forEach(key => caches.delete(key));
+          console.log('[Cache] Cachés borrados.');
+        });
+      }
     }
   </script>
 </body>

@@ -1,11 +1,12 @@
 /**
- * ScanForge - OCR en el Servidor (Multi-PSM)
- * 
- * Prueba múltiples modos de segmentación de Tesseract (PSM)
- * para manejar diferentes tipos de documentos:
- * - Texto normal, columnas, infografías, tablas, etc.
- * 
- * Incluye limpieza de texto basura (bordes de cajas leídos como |, -, \)
+ * ScanForge - Motor OCR Ultra (Multi-PSM + Multi-Preprocesamiento)
+ *
+ * Estrategia de máxima precisión:
+ * 1. Prueba la imagen en 3 variantes de preprocesamiento (original, alto contraste, invertida)
+ * 2. Por cada variante corre hasta 4 modos PSM de Tesseract
+ * 3. Early Stopping: si alguna combinación supera el 95% de confianza, para de inmediato
+ * 4. Elige el resultado con mayor score (confianza × cantidad de texto)
+ * 5. Aplica autoCorrect NLP al texto ganador
  */
 
 const express = require('express');
@@ -16,227 +17,194 @@ const router = express.Router();
 
 let worker = null;
 
-/**
- * Inicializa el worker de Tesseract.
- */
+// ─── Worker ────────────────────────────────────────────────────────────────
+
 async function getWorker() {
   if (worker) return worker;
   console.log('🔄 Inicializando worker de Tesseract...');
   try {
-    worker = await Tesseract.createWorker('spa+eng', 1, {
-      cacheMethod: 'readOnly', // No intentar escribir en disco en producción
-    });
+    worker = await Tesseract.createWorker('spa+eng', 1);
     console.log('✅ Worker de Tesseract listo');
   } catch (err) {
-    console.error('❌ Error creando worker de Tesseract:', err.message);
+    console.error('❌ Error creando worker:', err.message);
     worker = null;
     throw err;
   }
   return worker;
 }
 
-// Pre-calentar Tesseract al iniciar el servidor para no tener el retraso en la primera petición
-getWorker().catch(err => console.error('⚠️ Warmup de Tesseract falló:', err.message));
+// Pre-calentar Tesseract al arrancar el servidor
+getWorker().catch(err => console.error('⚠️ Warmup falló:', err.message));
+
+// ─── Pre-procesamiento ─────────────────────────────────────────────────────
 
 /**
- * Prepara la imagen con sharp (suave, sin binarización).
+ * Genera múltiples variantes de la imagen para maximizar la lectura.
+ * Variante A: Estándar (grises + contraste fuerte)
+ * Variante B: Ultra-contraste (para texto muy claro o borroso)
+ * Variante C: Invertida (para texto blanco sobre fondo oscuro)
  */
-async function preprocessImage(imageBuffer) {
+async function generateVariants(imageBuffer) {
   const meta = await sharp(imageBuffer).metadata();
   const w = meta.width || 800;
+  const targetWidth = Math.max(w, 3000); // Mínimo 3000px de ancho para mejor OCR
 
-  // Escalar agresivamente para texto pequeño
-  const targetWidth = 3500;
-  const needsUpscale = w < targetWidth;
+  const base = sharp(imageBuffer).resize({
+    width: targetWidth,
+    kernel: sharp.kernel.lanczos3,
+    withoutEnlargement: false,
+  });
 
-  let pipe = sharp(imageBuffer);
+  const [varA, varB, varC] = await Promise.all([
+    // Variante A: Estándar
+    base.clone()
+      .grayscale()
+      .normalize()
+      .linear(1.3, -15)
+      .sharpen({ sigma: 2.0, m1: 1.0, m2: 2.0 })
+      .png({ compressionLevel: 1 })
+      .toBuffer(),
 
-  if (needsUpscale) {
-    pipe = pipe.resize({
-      width: targetWidth,
-      kernel: sharp.kernel.lanczos3,
-      withoutEnlargement: false,
-    });
-  }
+    // Variante B: Ultra contraste (para imágenes con mal foco o iluminación)
+    base.clone()
+      .grayscale()
+      .normalize()
+      .linear(2.0, -60)
+      .sharpen({ sigma: 3.0, m1: 2.0, m2: 3.0 })
+      .png({ compressionLevel: 1 })
+      .toBuffer(),
 
-  // Pre-procesamiento compatible: grises + contraste lineal + nitidez fuerte
-  // Se evita .clahe() porque no está disponible en todos los entornos de producción
-  const processed = await pipe
-    .grayscale()
-    .normalize()
-    .linear(1.3, -15)   // Contraste aumentado
-    .sharpen({ sigma: 2.0, m1: 1.0, m2: 2.0 }) // Letras con bordes nítidos
-    .png({ compressionLevel: 1 }) // PNG rápido sin comprimir mucho
-    .toBuffer();
+    // Variante C: Invertida (texto claro sobre fondo oscuro)
+    base.clone()
+      .grayscale()
+      .normalize()
+      .negate()
+      .linear(1.3, -15)
+      .sharpen({ sigma: 2.0 })
+      .png({ compressionLevel: 1 })
+      .toBuffer(),
+  ]);
 
-  return processed;
+  return [
+    { name: 'estándar',       buffer: varA },
+    { name: 'ultra-contraste', buffer: varB },
+    { name: 'invertida',       buffer: varC },
+  ];
 }
 
-/**
- * Limpia el texto extraído: quita basura de bordes/cajas.
- */
+// ─── Limpieza de texto ──────────────────────────────────────────────────────
+
 function cleanText(text) {
   if (!text) return '';
-
-  let lines = text.split('\n');
-
-  lines = lines.map(line => {
-    // Quitar líneas que son solo símbolos de bordes/cajas
-    // Ejemplo: "| — — — — |", "== = ——", "- — - — -"
-    let cleaned = line
-      .replace(/[|\\\/\[\]{}]/g, ' ')  // Quitar pipes, barras, corchetes
-      .replace(/—/g, ' ')              // Quitar em-dash
-      .replace(/[-=_]{2,}/g, ' ')      // Quitar líneas de guiones/iguales repetidos
-      .replace(/\s+/g, ' ')            // Colapsar espacios
-      .trim();
-
-    return cleaned;
-  });
-
-  // Filtrar líneas vacías o que solo tienen 1-2 caracteres basura
-  lines = lines.filter(line => {
+  let lines = text.split('\n').map(line =>
+    line
+      .replace(/[|\\\\/\[\]{}]/g, ' ')
+      .replace(/—/g, ' ')
+      .replace(/[-=_]{2,}/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  ).filter(line => {
     if (line.length <= 2) return false;
-    // Si la línea es casi toda símbolos, quitarla
-    const alphaCount = (line.match(/[a-záéíóúñA-ZÁÉÍÓÚÑ0-9]/g) || []).length;
-    const ratio = alphaCount / line.length;
-    return ratio > 0.3; // Al menos 30% de la línea debe ser texto real
+    const alpha = (line.match(/[a-záéíóúñA-ZÁÉÍÓÚÑ0-9]/g) || []).length;
+    return alpha / line.length > 0.25;
   });
-
   return lines.join('\n').trim();
 }
 
-/**
- * Mejora: Corrección Automática (NLP Básico)
- * Corrige errores comunes de interpretación óptica (letras confundidas con números).
- */
+// ─── Corrección NLP ──────────────────────────────────────────────────────────
+
 function autoCorrectText(text) {
   if (!text) return '';
   return text
-    // Corrige '0' leídos como 'O' dentro de palabras (ej. "h0la" -> "hola")
-    .replace(/([a-zA-ZáéíóúÁÉÍÓÚñÑ])0([a-zA-ZáéíóúÁÉÍÓÚñÑ])/g, '$1o$2')
-    // Corrige '1' leídos como 'l' dentro de palabras
-    .replace(/([a-zA-ZáéíóúÁÉÍÓÚñÑ])1([a-zA-ZáéíóúÁÉÍÓÚñÑ])/g, '$1l$2')
-    // Normalizar múltiples espacios a uno solo
+    .replace(/([a-záéíóúñA-ZÁÉÍÓÚÑ])0([a-záéíóúñA-ZÁÉÍÓÚÑ])/g, '$1o$2')
+    .replace(/([a-záéíóúñA-ZÁÉÍÓÚÑ])1([a-záéíóúñA-ZÁÉÍÓÚÑ])/g, '$1l$2')
     .replace(/ {2,}/g, ' ')
-    // Limpiar saltos de línea exagerados
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
-/**
- * POST /api/ocr
- * 
- * Multi-PSM: prueba 3 modos de segmentación de página:
- * - PSM 3: Automático (bueno para documentos normales)
- * - PSM 6: Bloque uniforme (bueno para párrafos)
- * - PSM 11: Texto disperso (bueno para infografías/diseños complejos)
- * - PSM 4: Columna de texto (bueno para libros)
- */
+// ─── Ruta POST /api/ocr ─────────────────────────────────────────────────────
+
+const PSM_MODES = [
+  { psm: '6',  name: 'bloque' },
+  { psm: '3',  name: 'auto' },
+  { psm: '4',  name: 'columna' },
+  { psm: '11', name: 'disperso' },
+];
+
 router.post('/api/ocr', async (req, res) => {
   try {
     const { image } = req.body;
 
     if (!image) {
-      return res.status(400).json({
-        error: 'Imagen requerida',
-        mensaje: 'Debe enviar la imagen en formato base64.',
-      });
+      return res.status(400).json({ error: 'Imagen requerida', mensaje: 'Envía la imagen en formato base64.' });
     }
 
-    // Decodificar base64
     const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
     const imageBuffer = Buffer.from(base64Data, 'base64');
     console.log(`📸 Imagen recibida: ${(imageBuffer.length / 1024).toFixed(0)} KB`);
 
-    // Preprocesar imagen (suave)
-    const processed = await preprocessImage(imageBuffer);
-    console.log(`🖼️ Imagen procesada: ${(processed.length / 1024).toFixed(0)} KB`);
-
-    // Obtener worker
+    const variants = await generateVariants(imageBuffer);
     const w = await getWorker();
 
-    // Probar múltiples modos de segmentación
-    const psmModes = [
-      { psm: '6',  name: 'bloque_uniforme' },
-      { psm: '4',  name: 'columna_texto' },
-      { psm: '3',  name: 'automático' },
-      { psm: '11', name: 'texto_disperso' },
-    ];
+    const allResults = [];
+    let stopped = false;
 
-    const results = [];
+    outer: for (const variant of variants) {
+      console.log(`\n🖼️  Variante: ${variant.name}`);
+      for (const mode of PSM_MODES) {
+        if (stopped) break outer;
 
-    for (const mode of psmModes) {
-      try {
-        // Configurar PSM para esta pasada
-        await w.setParameters({
-          tessedit_pageseg_mode: mode.psm,
-          preserve_interword_spaces: '1',
-        });
+        try {
+          await w.setParameters({
+            tessedit_pageseg_mode: mode.psm,
+            preserve_interword_spaces: '1',
+          });
 
-        const result = await w.recognize(processed);
-        const rawText = (result.data.text || '').trim();
-        const cleaned = cleanText(rawText);
-        const confidence = result.data.confidence || 0;
+          const result = await w.recognize(variant.buffer);
+          const raw = (result.data.text || '').trim();
+          const cleaned = cleanText(raw);
+          const confidence = result.data.confidence || 0;
+          const score = confidence * Math.min(cleaned.length, 3000) / 100;
 
-        console.log(`  📝 PSM ${mode.psm} (${mode.name}): confianza=${confidence.toFixed(1)}%, chars_raw=${rawText.length}, chars_clean=${cleaned.length}`);
+          console.log(`  PSM ${mode.psm} (${mode.name}): conf=${confidence.toFixed(1)}%, chars=${cleaned.length}, score=${score.toFixed(0)}`);
 
-        results.push({
-          psm: mode.psm,
-          name: mode.name,
-          text: cleaned,
-          rawText: rawText,
-          confidence,
-          // Score combinado: confianza * cantidad de texto útil
-          score: confidence * Math.min(cleaned.length, 2000) / 100,
-        });
+          allResults.push({ variant: variant.name, psm: mode.psm, name: mode.name, text: cleaned, confidence, score });
 
-        // Mejora: Early Stopping (Velocidad x4)
-        // Si el texto es de muy alta calidad y logramos más de 95% de confianza, detenemos la búsqueda
-        if (confidence >= 95 && cleaned.length > 20) {
-          console.log(`🚀 Early Stopping! Confianza estelar del ${confidence.toFixed(1)}% en modo ${mode.name}. Deteniendo escaneo extra.`);
-          break; 
+          // Early Stopping: 95% de confianza con texto real es perfecto
+          if (confidence >= 95 && cleaned.length > 20) {
+            console.log(`🚀 Early Stopping! ${confidence.toFixed(1)}% en variante "${variant.name}" PSM ${mode.psm}`);
+            stopped = true;
+          }
+        } catch (e) {
+          console.error(`  ❌ Error PSM ${mode.psm}:`, e.message);
         }
-      } catch (e) {
-        console.error(`  ❌ Error PSM ${mode.psm}:`, e.message);
       }
     }
 
-    // Elegir el mejor: mayor score (confianza * texto útil)
-    const validResults = results.filter(r => r.text.length > 5);
-
-    if (validResults.length === 0) {
-      console.log('❌ Ningún resultado válido');
-      return res.json({
-        text: results[0]?.rawText || '',
-        confidence: results[0]?.confidence || 0,
-        engine: 'server',
-      });
+    const valid = allResults.filter(r => r.text.length > 5);
+    if (valid.length === 0) {
+      return res.json({ text: '', confidence: 0, engine: 'server', mode: 'ninguno' });
     }
 
-    validResults.sort((a, b) => b.score - a.score);
-    const best = validResults[0];
-
-    console.log(`✅ Mejor: PSM ${best.psm} (${best.name}) — confianza: ${best.confidence.toFixed(1)}%, score: ${best.score.toFixed(0)}`);
+    valid.sort((a, b) => b.score - a.score);
+    const best = valid[0];
+    console.log(`\n✅ Ganador: variante "${best.variant}" PSM ${best.psm} — confianza: ${best.confidence.toFixed(1)}%`);
 
     res.json({
-      text: autoCorrectText(best.text), // Aplicamos el NLP final aquí
+      text: autoCorrectText(best.text),
       confidence: best.confidence,
       engine: 'server',
-      mode: best.name,
+      mode: `${best.variant}/${best.name}`,
     });
 
   } catch (error) {
-    console.error('❌ Error en OCR servidor:', error.message);
-
+    console.error('❌ Error general en OCR:', error.message);
     if (worker) {
-      try { await worker.terminate(); } catch (e) { /* ignorar */ }
+      try { await worker.terminate(); } catch (_) {}
       worker = null;
     }
-
-    res.status(500).json({
-      error: 'Error de OCR',
-      mensaje: 'No se pudo procesar la imagen: ' + error.message,
-    });
+    res.status(500).json({ error: 'Error de OCR', mensaje: 'No se pudo procesar la imagen: ' + error.message });
   }
 });
 
