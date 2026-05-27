@@ -42,8 +42,8 @@ app.use(limiter);
 
 // --- Middlewares Generales ---
 app.use(cors());
-// Limitar severamente el tamaño del JSON para prevenir saturación de memoria
-app.use(express.json({ limit: '5mb' })); // Cambiado de 50mb a 5mb (el OCR en el cliente envía texto, no imagen)
+// Límite de 50mb requerido para el OCR de respaldo (que envía la imagen en base64 al servidor)
+app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // --- Rutas ---
